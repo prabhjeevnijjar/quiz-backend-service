@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yaml — Quiz Backend Local Development
+#
+# Brings up the entire infrastructure in one command:
+#   docker compose up -d --build
+#
+# Services:
+#   postgres   — Primary PostgreSQL 16 (both write + read pools point here in dev)
+#   redis      — Redis 7 (leaderboard, pub/sub, rate-limit, BullMQ)
+#   rabbitmq   — RabbitMQ 3.13 with management UI (quorum queues + DLQ topology)
+#   api-gateway — Fastify app (auto-restarts on source changes via tsx watch)
+#
+# Access points:
+#   API:         http://localhost:3000
+#   Health:      http://localhost:3000/health
+#   Roundtrip:   POST http://localhost:3000/health/test-roundtrip
+#   RabbitMQ UI: http://localhost:15672  (quiz_user / quiz_pass)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL 16 (Primary) ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       quiz
+      POSTGRES_USER:     quiz_admin
+      POSTGRES_PASSWORD: quiz_secret_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quiz_admin -d quiz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Tuned for local dev — do NOT use these in production
+    command: >
+      postgres
+        -c shared_buffers=256MB
+        -c work_mem=16MB
+        -c effective_cache_size=512MB
+        -c max_connections=200
+        -c log_statement=all
+
+  # ── Redis 7 ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Append-only file for durability even in dev
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  # ── RabbitMQ 3.13 ────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER:  quiz_user
+      RABBITMQ_DEFAULT_PASS:  quiz_pass
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"      # AMQP
+      - "15672:15672"    # Management UI
+    volumes:
+      - rmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── API Gateway (Fastify) ────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    # Mount source for hot-reload via tsx watch
+    volumes:
+      - ./apps:/app/apps
+      - ./packages:/app/packages
+
+volumes:
+  pg_data:
+  redis_data:
+  rmq_data:

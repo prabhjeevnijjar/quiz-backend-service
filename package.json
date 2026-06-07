@@ -1,0 +1,23 @@
+{
+  "name": "quiz-backend",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "pnpm --filter api-gateway dev",
+    "build": "pnpm --filter api-gateway build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:clean": "docker compose down -v --remove-orphans",
+    "docker:build": "docker compose up -d --build",
+    "docker:logs": "docker compose logs -f api-gateway",
+    "docker:logs:all": "docker compose logs -f",
+    "health": "curl -s http://localhost:3000/health | jq ."
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.8"
+  }
+}

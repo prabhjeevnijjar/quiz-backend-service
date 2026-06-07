@@ -1,0 +1,57 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import { loadConfig } from '@quiz/config';
+import { logger } from '@quiz/logger';
+
+// ── Plugins ──────────────────────────────────────────────────────────────────
+import dbPlugin       from './plugins/db.plugin';
+import redisPlugin    from './plugins/redis.plugin';
+import rabbitmqPlugin from './plugins/rabbitmq.plugin';
+
+// ── Handlers ─────────────────────────────────────────────────────────────────
+import healthRoutes   from './domains/health/health.handler';
+
+// ─── Bootstrap ───────────────────────────────────────────────────────────────
+
+async function main() {
+  const config = loadConfig();
+
+  const app = Fastify({
+    logger,
+    // Disable request-id generation overhead if behind a load balancer
+    // that already supplies X-Request-Id
+    requestIdHeader: 'x-request-id',
+    trustProxy:      true,
+  });
+
+  // ── Register plugins in dependency order ─────────────────────────────────
+  // CORS must be first (adds headers to every response, including error responses)
+  await app.register(cors, { origin: true });
+
+  // Infrastructure — each plugin fails loud on startup if the service is unreachable
+  await app.register(dbPlugin,       { config });
+  await app.register(redisPlugin,    { config });
+  await app.register(rabbitmqPlugin, { config });
+
+  // ── Register domain handlers ─────────────────────────────────────────────
+  await app.register(healthRoutes);
+
+  // ── Start ────────────────────────────────────────────────────────────────
+  await app.listen({ port: config.PORT, host: config.HOST });
+  app.log.info(`🚀  api-gateway listening on http://${config.HOST}:${config.PORT}`);
+
+  // ── Graceful shutdown ────────────────────────────────────────────────────
+  const shutdown = async (signal: string) => {
+    app.log.info(`Received ${signal}. Shutting down gracefully...`);
+    await app.close();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT',  () => void shutdown('SIGINT'));
+}
+
+main().catch((err) => {
+  logger.fatal({ err }, 'Failed to start api-gateway');
+  process.exit(1);
+});
