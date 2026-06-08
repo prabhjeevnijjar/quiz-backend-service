@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import dotenv from 'dotenv';
 import { loadConfig } from '@quiz/config';
 import { logger } from '@quiz/logger';
 
@@ -14,6 +15,8 @@ import healthRoutes   from './domains/health/health.handler';
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 async function main() {
+  dotenv.config();
+
   const config = loadConfig();
 
   const app = Fastify({

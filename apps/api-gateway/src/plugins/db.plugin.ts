@@ -65,7 +65,7 @@ const dbPlugin: FastifyPluginAsync<DbPluginOptions> = async (fastify, { config }
     const client = await pool.connect();
     try {
       await client.query('SELECT 1');
-      fastify.log.info(`✅  PostgreSQL [${label}] connected — host: ${
+      fastify.log.info(`PostgreSQL [${label}] connected to host: ${
         label === 'write' ? config.PG_WRITE_HOST : config.PG_READ_HOST
       }, pool max: ${pool.options.max}`);
     } finally {
@@ -76,15 +76,11 @@ const dbPlugin: FastifyPluginAsync<DbPluginOptions> = async (fastify, { config }
   await verifyPool(writePool, 'write');
   await verifyPool(readPool,  'read');
 
-  // ── Decorate fastify instance ──────────────────────────────────────────────
   fastify.decorate('db', { write: writePool, read: readPool });
 
-  // ── Pool-level error listeners ─────────────────────────────────────────────
-  // Without these, an idle client error would throw an unhandled exception.
   writePool.on('error', (err) => fastify.log.error({ err }, 'Write pool idle client error'));
   readPool.on('error',  (err) => fastify.log.error({ err }, 'Read pool idle client error'));
 
-  // ── Graceful shutdown ──────────────────────────────────────────────────────
   fastify.addHook('onClose', async () => {
     fastify.log.info('Draining PostgreSQL pools...');
     await Promise.all([writePool.end(), readPool.end()]);

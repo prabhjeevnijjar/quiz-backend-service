@@ -10,7 +10,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: deps ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:22.18-alpine AS deps
 
 # Install pnpm globally
 RUN corepack enable && corepack prepare pnpm@latest --activate
@@ -30,7 +30,7 @@ COPY apps/api-gateway/package.json apps/api-gateway/
 RUN pnpm install --frozen-lockfile || pnpm install
 
 # ── Stage 2: dev runner ──────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:22.18-alpine AS runner
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
