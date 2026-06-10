@@ -10,7 +10,9 @@ import redisPlugin from "./plugins/redis.plugin";
 import rabbitmqPlugin from "./plugins/rabbitmq.plugin";
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
-import healthRoutes from "./domains/health/health.handler";
+import healthRoutes   from './domains/health/health.handler';
+import adminRoutes    from './domains/admin/admin.routes';
+import participantRoutes from './domains/participant/participant.routes';
 
 async function main() {
   dotenv.config({
@@ -37,6 +39,8 @@ async function main() {
 
   // ── Register domain handlers ─────────────────────────────────────────────
   await app.register(healthRoutes);
+  await app.register(adminRoutes);
+  await app.register(participantRoutes);
 
   // ── Start ────────────────────────────────────────────────────────────────
   await app.listen({ port: config.PORT, host: config.HOST });

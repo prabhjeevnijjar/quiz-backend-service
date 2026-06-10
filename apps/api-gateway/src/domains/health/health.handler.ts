@@ -21,21 +21,20 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CheckResult {
-  status:      'ok' | 'error';
+  status: 'ok' | 'error';
   latency_ms?: number;
-  detail?:     string;
-  error?:      string;
+  detail?: string;
+  error?: string;
 }
 
 async function measure<T>(fn: () => Promise<T>): Promise<{ result: T; ms: number }> {
-  const start  = performance.now();
+  const start = performance.now();
   const result = await fn();
   return { result, ms: Math.round((performance.now() - start) * 100) / 100 };
 }
 
 export default async function healthRoutes(fastify: FastifyInstance) {
 
-  // ── GET /health ────────────────────────────────────────────────────────────
   fastify.get('/health', async (_req: FastifyRequest, reply: FastifyReply) => {
 
     const checks: Record<string, CheckResult> = {};
@@ -54,9 +53,9 @@ export default async function healthRoutes(fastify: FastifyInstance) {
         }
       });
       checks.postgres_write = {
-        status:     'ok',
+        status: 'ok',
         latency_ms: ms,
-        detail:     `db=${result.db} is_replica=${result.is_replica} host=${result.host}`,
+        detail: `db=${result.db} is_replica=${result.is_replica} host=${result.host}`,
       };
     } catch (err) {
       checks.postgres_write = { status: 'error', error: (err as Error).message };
@@ -76,9 +75,9 @@ export default async function healthRoutes(fastify: FastifyInstance) {
         }
       });
       checks.postgres_read = {
-        status:     'ok',
+        status: 'ok',
         latency_ms: ms,
-        detail:     `db=${result.db} is_replica=${result.is_replica} host=${result.host}`,
+        detail: `db=${result.db} is_replica=${result.is_replica} host=${result.host}`,
       };
     } catch (err) {
       checks.postgres_read = { status: 'error', error: (err as Error).message };
@@ -88,7 +87,7 @@ export default async function healthRoutes(fastify: FastifyInstance) {
     try {
       const { result, ms } = await measure(() => fastify.redis.ping());
       checks.redis = {
-        status:     result === 'PONG' ? 'ok' : 'error',
+        status: result === 'PONG' ? 'ok' : 'error',
         latency_ms: ms,
       };
     } catch (err) {
@@ -103,23 +102,23 @@ export default async function healthRoutes(fastify: FastifyInstance) {
         await fastify.amqp.channel.checkExchange('quiz.submissions');
       });
       checks.rabbitmq = {
-        status:     'ok',
+        status: 'ok',
         latency_ms: ms,
-        detail:     'channel open, exchange quiz.submissions exists',
+        detail: 'channel open, exchange quiz.submissions exists',
       };
     } catch (err) {
       checks.rabbitmq = { status: 'error', error: (err as Error).message };
     }
 
     // ── Aggregate status ───────────────────────────────────────────────────
-    const allOk    = Object.values(checks).every((c) => c.status === 'ok');
-    const status   = allOk ? 'healthy' : 'degraded';
+    const allOk = Object.values(checks).every((c) => c.status === 'ok');
+    const status = allOk ? 'healthy' : 'degraded';
     const httpCode = allOk ? 200 : 503;
 
     return reply.status(httpCode).send({
       status,
       uptime_seconds: Math.round(process.uptime() * 1000) / 1000,
-      timestamp:      new Date().toISOString(),
+      timestamp: new Date().toISOString(),
       checks,
     });
   });
@@ -183,14 +182,14 @@ export default async function healthRoutes(fastify: FastifyInstance) {
     // 3. RabbitMQ publish + consume roundtrip
     try {
       const { ms } = await measure(async () => {
-        const testQueue   = `_health.test.${testId}`;
+        const testQueue = `_health.test.${testId}`;
         const testPayload = JSON.stringify({ test: testId });
 
         // Assert a temporary queue (auto-delete after test)
         await fastify.amqp.channel.assertQueue(testQueue, {
-          durable:    false,
+          durable: false,
           autoDelete: true,
-          exclusive:  true,
+          exclusive: true,
         });
 
         // Publish with publisher confirms
@@ -228,12 +227,12 @@ export default async function healthRoutes(fastify: FastifyInstance) {
     }
 
     // ── Response ─────────────────────────────────────────────────────────────
-    const allOk    = Object.values(results).every((c) => c.status === 'ok');
+    const allOk = Object.values(results).every((c) => c.status === 'ok');
     const httpCode = allOk ? 200 : 503;
 
     return reply.status(httpCode).send({
-      status:    allOk ? 'all_passed' : 'some_failed',
-      test_id:   testId,
+      status: allOk ? 'all_passed' : 'some_failed',
+      test_id: testId,
       timestamp: new Date().toISOString(),
       results,
     });
