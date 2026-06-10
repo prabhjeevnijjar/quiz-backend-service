@@ -4,14 +4,12 @@ import dotenv from "dotenv";
 import { loadConfig } from "@quiz/config";
 import { logger } from "@quiz/logger";
 
-// ── Plugins ──────────────────────────────────────────────────────────────────
 import dbPlugin from "./plugins/db.plugin";
 import redisPlugin from "./plugins/redis.plugin";
 import rabbitmqPlugin from "./plugins/rabbitmq.plugin";
 
-// ── Handlers ─────────────────────────────────────────────────────────────────
-import healthRoutes   from './domains/health/health.handler';
-import adminRoutes    from './domains/admin/admin.routes';
+import healthRoutes from './domains/health/health.handler';
+import adminRoutes from './domains/admin/admin.routes';
 import participantRoutes from './domains/participant/participant.routes';
 
 async function main() {
@@ -28,27 +26,25 @@ async function main() {
     trustProxy: true,
   });
 
-  // ── Register plugins in dependency order ─────────────────────────────────
-  // CORS must be first (adds headers to every response, including error responses)
+  // CORS
   await app.register(cors, { origin: true });
 
-  // Infrastructure — each plugin fails loud on startup if the service is unreachable
+  // Infrastructuree
   await app.register(dbPlugin, { config });
   await app.register(redisPlugin, { config });
   await app.register(rabbitmqPlugin, { config });
 
-  // ── Register domain handlers ─────────────────────────────────────────────
+  // api route handlers
   await app.register(healthRoutes);
   await app.register(adminRoutes);
   await app.register(participantRoutes);
 
-  // ── Start ────────────────────────────────────────────────────────────────
   await app.listen({ port: config.PORT, host: config.HOST });
   app.log.info(
-    `🚀  api-gateway listening on http://${config.HOST}:${config.PORT}`,
+    `api-gateway listening on http://${config.HOST}:${config.PORT}`,
   );
 
-  // ── Graceful shutdown ────────────────────────────────────────────────────
+  // shutdown
   const shutdown = async (signal: string) => {
     app.log.info(`Received ${signal}. Shutting down gracefully...`);
     await app.close();

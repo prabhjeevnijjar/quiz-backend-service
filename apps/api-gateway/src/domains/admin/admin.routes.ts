@@ -5,8 +5,8 @@ import { AdminAnalyticsService } from './analytics/analytics.service';
 import { AdminAnalyticsRepository } from './analytics/analytics.repository';
 
 export default async function adminRoutes(fastify: FastifyInstance) {
-  const quizRepo = new AdminQuizRepository(fastify.db.write, fastify.db.read);
-  const quizService = new AdminQuizService(quizRepo);
+  const quizRepo = new AdminQuizRepository(fastify.db.write, fastify.db.read); // db functiond
+  const quizService = new AdminQuizService(quizRepo); // db fns called in busines logic
 
   const analyticsRepo = new AdminAnalyticsRepository(fastify.db.read);
   const analyticsService = new AdminAnalyticsService(analyticsRepo);
