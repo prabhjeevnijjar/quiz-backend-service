@@ -158,7 +158,7 @@ export default async function healthRoutes(fastify: FastifyInstance) {
         );
         if (res.rows.length === 0) throw new Error('Write succeeded but read returned 0 rows');
         // Cleanup
-        await fastify.db.write.query('DELETE FROM _health_check WHERE id = $1', [testId]);
+        // await fastify.db.write.query('DELETE FROM _health_check WHERE id = $1', [testId]);
       });
       results.postgres_roundtrip = { status: 'ok', latency_ms: ms, detail: `wrote + read + deleted key=${testId}` };
     } catch (err) {

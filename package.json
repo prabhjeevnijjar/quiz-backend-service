@@ -11,7 +11,10 @@
     "docker:build": "docker compose up -d --build",
     "docker:logs": "docker compose logs -f api-gateway",
     "docker:logs:all": "docker compose logs -f",
-    "health": "curl -s http://localhost:3000/health | jq ."
+    "health": "curl -s http://localhost:3000/health | jq .",
+    "db:migrate": "pnpm --filter @quiz/database migrate:up",
+    "db:migrate:down": "pnpm --filter @quiz/database migrate:down",
+    "db:create-migration": "pnpm --filter @quiz/database migrate:create"
   },
   "engines": {
     "node": ">=22.18.0",

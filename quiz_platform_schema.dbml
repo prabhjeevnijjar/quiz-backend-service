@@ -1,0 +1,362 @@
+// =====================================================================
+// QUIZ PLATFORM — PostgreSQL Schema
+// Format: dbdiagram.io DBML
+// Target: 10,000+ concurrent users, horizontal scaling
+// =====================================================================
+//
+// DESIGN DECISIONS (referenced inline as [Dx]):
+//
+// [D1] UUID PKs on all transactional tables
+//      → gen_random_uuid() requires no central coordinator
+//      → Safe for future horizontal sharding or multi-region writes
+//      → No sequential ID leakage in public-facing URLs
+//
+// [D2] BIGSERIAL PKs on append-only tables (outbox, audit)
+//      → Natural FIFO ordering — relay workers process id ASC
+//      → Sequential scans on the small unpublished working set
+//      → UUID sort on large append-only tables wastes CPU + I/O
+//
+// [D3] timestamptz throughout (never bare timestamp)
+//      → Stored as UTC; comparisons are timezone-aware
+//      → Protects against DST bugs in scheduler/analytics queries
+//
+// [D4] JSONB for variable-shape / evolving data
+//      → Avoids EAV anti-pattern (separate key-value rows)
+//      → Add new config fields with zero ALTER TABLE migrations
+//      → GIN indexing available when querying inside JSON
+//      → Atomic updates via jsonb_set()
+//
+// [D5] DB-level ENUMs for finite state machines
+//      → Invalid states rejected before reaching the app layer
+//      → Self-documenting schema; no magic strings in queries
+//
+// [D6] Transactional Outbox Pattern
+//      → submission INSERT + outbox_event INSERT in ONE transaction
+//      → COMMIT = both persisted or neither
+//      → If RabbitMQ is down: rows survive, relay retries on recovery
+//      → Zero event / submission loss guarantee
+//
+// [D7] DB-level UNIQUE constraints for deduplication
+//      → Eliminates distributed lock requirement under race conditions
+//      → Works correctly across N horizontally scaled API pods
+//      → App-layer checks are still useful but are a UX optimization,
+//        not a correctness guarantee
+//
+// [D8] Denormalized counters on hot-read aggregates
+//      → Avoids COUNT(*) at scale on large partitioned tables
+//      → Updated atomically: UPDATE quizzes SET count = count + 1
+//      → Acceptable eventual consistency (±1 under concurrent load)
+//
+// [D9] Partial indexes on boolean flags
+//      → CREATE INDEX ... WHERE published = false
+//      → Index covers only the active working set; stays tiny forever
+//      → Full-table indexes on published grow with every row ever written
+//
+// =====================================================================
+
+
+// ── ENUMS ────────────────────────────────────────────────────────────────────
+// Declared first so table definitions can reference them below
+
+Enum admin_role {
+  super_admin  // Can manage other admins + all quizzes
+  admin        // Can manage own quizzes only
+}
+
+Enum quiz_status {
+  // [D5] State machine: only forward transitions allowed
+  // draft → scheduled → live → completed → archived
+  draft
+  scheduled
+  live
+  completed
+  archived
+}
+
+Enum question_type {
+  // Drives both scoring logic and frontend rendering
+  multiple_choice  // Single correct answer from options
+  multi_select     // Multiple correct answers from options
+  true_false       // Binary; stored as MCQ internally
+  short_answer     // Free text; manual grading or fuzzy match
+}
+
+Enum participant_quiz_status {
+  // Lifecycle within a single quiz
+  invited       // Admin sent invite or participant discovered quiz
+  joined        // Entered waiting room; OTP verified
+  completed     // Submitted answers
+  disqualified  // Flagged by anti-cheat or admin action
+}
+
+Enum submission_status {
+  // [D5] Processing pipeline state machine
+  received    // Persisted via POST /submit; outbox event written
+  processing  // Scoring worker picked up from RabbitMQ
+  scored      // Score + time_taken_ms populated by worker
+  failed      // Scoring failed after max retries; dead-lettered
+}
+
+Enum actor_type {
+  admin        // Human admin performing action
+  participant  // Human participant performing action
+  system       // Automated process (scheduler, worker, relay)
+}
+
+
+// ── ADMIN USERS ──────────────────────────────────────────────────────────────
+
+Table admin_users {
+  id            uuid         [pk, default: `gen_random_uuid()`, note: '[D1] UUID — no central sequence, safe for sharding']
+  email         varchar(255) [unique, not null, note: 'Login identifier; lowercase-normalized at app layer']
+  password_hash varchar(255) [not null, note: 'argon2id — NEVER store plaintext; minimum cost factor 2']
+  role          admin_role   [not null, default: 'admin', note: '[D5] RBAC enforced at DB level; super_admin can manage other admins']
+  is_active     boolean      [not null, default: true, note: 'Soft-disable: set false instead of DELETE to preserve audit trail. Hard DELETE loses history.']
+  last_login_at timestamptz  [note: '[D3] Security monitoring: detect stale or potentially compromised accounts']
+  created_at    timestamptz  [not null, default: `now()`]
+  updated_at    timestamptz  [not null, default: `now()`]
+
+  indexes {
+    email [name: 'idx_admin_users_email', note: 'Login + dedup lookup']
+  }
+}
+
+
+// ── QUIZZES ──────────────────────────────────────────────────────────────────
+
+Table quizzes {
+  id                uuid         [pk, default: `gen_random_uuid()`, note: '[D1]']
+  created_by        uuid         [not null, note: 'FK → admin_users.id']
+  title             varchar(500) [not null]
+  description       text
+  share_token       varchar(128) [unique, not null, note: 'Cryptographically random URL token for join link: /join/{share_token}. Not sequential to prevent enumeration.']
+  password_hash     varchar(255) [note: 'NULL = open access. argon2id hash when quiz requires a password. Checked before OTP verification.']
+  start_time        timestamptz  [not null, note: '[D3] Scheduler polls: WHERE status = scheduled AND start_time <= now()']
+  end_time          timestamptz  [not null, note: '[D3] Scheduler polls: WHERE status = live AND end_time <= now()']
+  status            quiz_status  [not null, default: 'draft', note: '[D5] Transitions: draft→scheduled→live→completed→archived. State enforced here AND in app service layer.']
+  settings          jsonb        [not null, default: '{}', note: '[D4] Flexible config object. Keys: shuffle_questions (bool), show_leaderboard (bool), max_participants (int), allow_late_join (bool). New settings added with zero schema migration.']
+  question_count    int          [not null, default: 0, note: '[D8] Denormalized. Incremented by API on question CREATE/DELETE. Avoids COUNT(*) on questions on every quiz list render. Risk: can drift; reconcile async.']
+  participant_count int          [not null, default: 0, note: '[D8] Denormalized. Incremented by scoring worker on submission.scored event. Avoids COUNT(*) on submissions for leaderboard headers.']
+  created_at        timestamptz  [not null, default: `now()`]
+  updated_at        timestamptz  [not null, default: `now()`]
+
+  indexes {
+    (status, start_time) [name: 'idx_quizzes_status_start', note: 'Scheduler: transition scheduled → live. WHERE status = scheduled AND start_time <= now()']
+    (status, end_time)   [name: 'idx_quizzes_status_end', note: 'Scheduler: transition live → completed. WHERE status = live AND end_time <= now()']
+    created_by           [name: 'idx_quizzes_created_by', note: 'Admin dashboard: list all quizzes by this admin (scoped access)']
+    share_token          [name: 'idx_quizzes_share_token', note: 'Join-URL resolution; unique lookup on every participant join']
+  }
+}
+
+
+// ── QUESTIONS ─────────────────────────────────────────────────────────────────
+
+Table questions {
+  id             uuid          [pk, default: `gen_random_uuid()`, note: '[D1]']
+  quiz_id        uuid          [not null, note: 'FK → quizzes.id ON DELETE CASCADE (questions are meaningless without their quiz)']
+  question_text  text          [not null]
+  question_type  question_type [not null, note: '[D5] Drives scoring logic in worker and rendering in frontend']
+  options        jsonb         [note: '[D4] Array of {id: uuid, text: string} for multiple_choice and multi_select. NULL for short_answer. Avoids a separate options table with an extra JOIN on every quiz load.']
+  correct_answer jsonb         [not null, note: '[D4] String for multiple_choice/true_false, string[] for multi_select, null for short_answer (manual grading). One column handles all question types without NULL-heavy extra columns.']
+  points         smallint      [not null, default: 1, note: 'Per-question weighting for variable scoring. smallint (max 32,767) sufficient; saves 2 bytes vs int — matters at millions of rows.']
+  order_index    smallint      [not null, note: 'Explicit render order. Do NOT rely on id or created_at in distributed INSERT scenarios where ordering is non-deterministic.']
+  created_at     timestamptz   [not null, default: `now()`]
+  updated_at     timestamptz   [not null, default: `now()`]
+
+  indexes {
+    quiz_id                [name: 'idx_questions_quiz_id', note: 'Primary access pattern: fetch all questions for a quiz in one query']
+    (quiz_id, order_index) [unique, name: 'uq_questions_quiz_order', note: '[D7] Enforces unique order position per quiz at DB level. Prevents two questions at position 3 under concurrent inserts.']
+  }
+}
+
+
+// ── PARTICIPANTS ──────────────────────────────────────────────────────────────
+
+Table participants {
+  id         uuid         [pk, default: `gen_random_uuid()`, note: '[D1]']
+  name       varchar(255) [not null]
+  email      varchar(255) [unique, not null, note: 'Platform-wide identity anchor. One participant per email. Lowercase-normalized at app layer to prevent duplicate@EMAIL.COM vs duplicate@email.com.']
+  verified   boolean      [not null, default: false, note: 'OTP gate: MUST be true before any quiz access is granted. Checked on every authenticated request.']
+  created_at timestamptz  [not null, default: `now()`]
+  updated_at timestamptz  [not null, default: `now()`]
+
+  indexes {
+    email [name: 'idx_participants_email', note: 'OTP verification flow + dedup check on join: find or create participant by email']
+  }
+}
+
+
+// ── OTP VERIFICATIONS ─────────────────────────────────────────────────────────
+
+Table otps {
+  id             uuid         [pk, default: `gen_random_uuid()`, note: '[D1]']
+  participant_id uuid         [note: 'Nullable FK → participants.id. NULL on first-ever sign-up: participant row does not exist yet when OTP is generated.']
+  email          varchar(255) [not null, note: 'Denormalized from participants. Required for lookup BEFORE participant_id is known (pre-registration flow). Avoids a JOIN on the critical auth path.']
+  code_hash      varchar(255) [not null, note: 'SHA-256 or argon2id hash of the 6-digit OTP. Plaintext OTP lives only in the email. DB compromise does not reveal valid codes.']
+  expires_at     timestamptz  [not null, note: '[D3] 10-minute TTL. Enforced at app layer via WHERE expires_at > now(). Also queryable by cleanup job without app involvement.']
+  used_at        timestamptz  [note: 'NULL = not yet used. Timestamp preferred over boolean: records exactly when code was consumed, enabling forensic audit.']
+  attempts       smallint     [not null, default: 0, note: 'Brute-force protection. App increments on each wrong submission. Invalidate (set expires_at = now()) after threshold (e.g. 5 attempts).']
+  created_at     timestamptz  [not null, default: `now()`]
+
+  indexes {
+    (email, expires_at) [name: 'idx_otps_lookup', note: 'Primary OTP lookup: WHERE email = ? AND expires_at > now() AND used_at IS NULL. Composite covers all three filter conditions.']
+    expires_at          [name: 'idx_otps_cleanup', note: 'Cleanup job: DELETE WHERE expires_at < now() - interval 1 hour. Keeps table small without full scan.']
+  }
+}
+
+
+// ── QUIZ PARTICIPANTS ─────────────────────────────────────────────────────────
+// Dual-purpose: invitation tracking + waiting room membership
+
+Table quiz_participants {
+  id                 uuid                    [pk, default: `gen_random_uuid()`, note: '[D1]']
+  quiz_id            uuid                    [not null, note: 'FK → quizzes.id ON DELETE CASCADE']
+  participant_id     uuid                    [not null, note: 'FK → participants.id ON DELETE RESTRICT (cannot delete participant with active quiz history)']
+  status             participant_quiz_status [not null, default: 'invited', note: '[D5] invited → joined → completed | disqualified']
+  invited_at         timestamptz             [note: '[D3] NULL if participant self-joined via public share link. Timestamp if admin explicitly invited.']
+  invitation_sent_at timestamptz             [note: '[D3] When invitation email was dispatched. NULL = email not yet sent. Email worker queries: WHERE invited_at IS NOT NULL AND invitation_sent_at IS NULL to find pending dispatches.']
+  joined_at          timestamptz             [note: '[D3] Timestamp when participant first entered the waiting room. Used for presence tracking + analytics.']
+  completed_at       timestamptz             [note: '[D3] Denormalized from submissions.submitted_at. Avoids JOIN on submissions for leaderboard header and admin participant list.']
+  created_at         timestamptz             [not null, default: `now()`]
+
+  indexes {
+    (quiz_id, participant_id) [unique, name: 'uq_quiz_participant', note: '[D7] Core dedup: one record per participant per quiz. Prevents double-invite, double-join, and double-scoring without distributed locks.']
+    quiz_id                   [name: 'idx_qp_quiz_id', note: 'Admin dashboard: list all participants for a quiz']
+    participant_id            [name: 'idx_qp_participant_id', note: 'Participant portal: history of all joined quizzes']
+    (quiz_id, status)         [name: 'idx_qp_quiz_status', note: 'Analytics: COUNT(*) grouped by status. Email worker: WHERE status = invited AND invitation_sent_at IS NULL.']
+  }
+}
+
+
+// ── SUBMISSIONS ───────────────────────────────────────────────────────────────
+//
+// HIGH-VOLUME TABLE — PARTITION STRATEGY (declared in migrations, not DBML):
+//
+//   CREATE TABLE submissions PARTITION BY HASH (quiz_id);
+//   CREATE TABLE submissions_p00 PARTITION OF submissions FOR VALUES WITH (MODULUS 16, REMAINDER 0);
+//   ... (repeat for p01..p15)
+//
+// WHY HASH(quiz_id) over RANGE(submitted_at)?
+//   During a live quiz, ALL submissions arrive in a very narrow time window
+//   (e.g. 60 minutes). A RANGE partition on submitted_at concentrates all
+//   burst writes into a single hot partition — no different from no partitioning.
+//   HASH(quiz_id) distributes writes across 16 partitions regardless of timing.
+//   Each quiz's traffic is isolated: a 10,000-person quiz doesn't contend with
+//   a concurrent 100-person quiz.
+
+Table submissions {
+  id             uuid              [pk, default: `gen_random_uuid()`, note: '[D1]']
+  quiz_id        uuid              [not null, note: 'FK → quizzes.id. ALSO the HASH partition key. Always include quiz_id in WHERE clauses to enable partition pruning.']
+  participant_id uuid              [not null, note: 'FK → participants.id ON DELETE RESTRICT']
+  answers        jsonb             [not null, note: '[D4] Immutable after INSERT. Structure: [{question_id: uuid, selected_option_id: uuid|null, text_answer: string|null}]. Scoring worker reads this field; it must NEVER be updated post-insert to maintain audit integrity.']
+  score          int               [note: 'NULL until scoring worker runs. Eventual consistency — consumer MUST check status = scored before reading this column.']
+  time_taken_ms  int               [note: 'Tie-breaker on leaderboard: equal score → lower time wins. Client-reported but validated server-side: MUST be <= (quiz.end_time - quiz.start_time) + tolerance_ms.']
+  status         submission_status [not null, default: 'received', note: '[D5] received → processing → scored | failed. Workers use FOR UPDATE SKIP LOCKED on received rows.']
+  submitted_at   timestamptz       [not null, default: `now()`, note: '[D3] Server-side timestamp. Client clock is untrusted.']
+  scored_at      timestamptz       [note: '[D3] NULL until scored. SLA alert: WHERE status = received AND submitted_at < now() - interval 60 seconds AND scored_at IS NULL.']
+
+  indexes {
+    (quiz_id, participant_id) [unique, name: 'uq_submission_quiz_participant', note: '[D7] THE critical dedup constraint. Prevents duplicate submissions across N API pods under race conditions. No distributed lock needed — Postgres serializes the INSERT at the index level.']
+    (quiz_id, score, time_taken_ms) [name: 'idx_submissions_leaderboard', note: 'Leaderboard cold-rebuild from DB when Redis is unavailable: SELECT * WHERE quiz_id = ? ORDER BY score DESC NULLS LAST, time_taken_ms ASC LIMIT 100']
+    (quiz_id, status)               [name: 'idx_submissions_recovery', note: 'Worker recovery: find submissions stuck in received/processing for dead-letter requeue']
+    participant_id                  [name: 'idx_submissions_participant', note: 'Participant result history page']
+  }
+}
+
+
+// ── OUTBOX EVENTS ─────────────────────────────────────────────────────────────
+//
+// [D6] WRITTEN IN SAME TRANSACTION AS BUSINESS WRITES.
+//
+//   BEGIN;
+//     INSERT INTO submissions (id, quiz_id, ...) VALUES (...);
+//     INSERT INTO outbox_events (aggregate_type, aggregate_id, event_type, payload) VALUES (...);
+//   COMMIT;
+//
+// If RabbitMQ is down: BOTH rows survive the COMMIT.
+// Relay process retries delivery using publisher confirms.
+// No submission is ever silently dropped.
+//
+// PARTITION STRATEGY: RANGE on created_at (monthly).
+//   Once a partition's events are all published, DETACH + DROP it.
+//   No VACUUM needed on dropped partitions. Table stays lean forever.
+
+Table outbox_events {
+  id             bigserial    [pk, note: '[D2] BIGSERIAL not UUID. Relay processes ORDER BY id ASC = natural FIFO. UUID requires sorting random 128-bit values — costly at high throughput.']
+  aggregate_type varchar(100) [not null, note: 'Source entity class: submission, quiz, participant. Enables filtered relay per service type.']
+  aggregate_id   uuid         [not null, note: 'Source entity UUID. JOIN anchor for tracing all events of a given entity. Also used by idempotency checks in workers.']
+  event_type     varchar(100) [not null, note: 'Maps to RabbitMQ routing key. Values: submission.received, submission.scored, email.send, leaderboard.updated. Routing key determines which worker queues receive the message.']
+  payload        jsonb        [not null, note: '[D4] Full denormalized event payload. Workers are self-contained — they NEVER need to re-query PostgreSQL after consuming an event. Include all fields the downstream worker needs.']
+  published      boolean      [not null, default: false, note: '[D9] Relay sets to true ONLY after receiving RabbitMQ publisher confirm. false = needs delivery. Enables partial-index trick for tiny relay index.']
+  retry_count    smallint     [not null, default: 0, note: 'Incremented by relay on each failed publish attempt. Alert on retry_count > 3. Move to dead-letter after max_retries.']
+  published_at   timestamptz  [note: '[D3] Observability: relay_latency_ms = published_at - created_at. P99 on this = end-to-end event delivery SLA.']
+  created_at     timestamptz  [not null, default: `now()`]
+
+  indexes {
+    // [D9] In production, replace this composite with a TRUE partial index:
+    //   CREATE INDEX idx_outbox_relay_unpublished ON outbox_events(id) WHERE published = false;
+    // This index stays tiny (only unpublished rows) even after millions of published rows accumulate.
+    // DBML cannot declare partial indexes; add this in your migration file.
+    (published, id) [name: 'idx_outbox_relay', note: '[D9] Relay query: WHERE published = false ORDER BY id FOR UPDATE SKIP LOCKED. Replace with partial index in migrations: WHERE published = false']
+    aggregate_id    [name: 'idx_outbox_aggregate_id', note: 'Trace all events for a given source entity — essential for debugging and idempotency checks in workers']
+    event_type      [name: 'idx_outbox_event_type', note: 'Monitoring: SELECT event_type, COUNT(*) WHERE published = false GROUP BY event_type — detects per-routing-key backlogs']
+  }
+}
+
+
+// ── AUDIT LOGS ────────────────────────────────────────────────────────────────
+//
+// APPEND-ONLY. Application code MUST NEVER UPDATE or DELETE rows.
+// Immutability is enforced via PostgreSQL row security policy or
+// application-layer write permissions (audit_logs INSERT-only role).
+//
+// PARTITION STRATEGY: RANGE on created_at (monthly).
+//   Prune partitions older than retention period cleanly.
+//   No VACUUM overhead on dropped partitions.
+
+Table audit_logs {
+  id            bigserial    [pk, note: '[D2] Append-only sequential log. BIGSERIAL is ideal — cheap, ordered by insertion time, no coordination overhead.']
+  actor_id      uuid         [not null, note: 'UUID of the admin, participant, or system process that performed the action']
+  actor_type    actor_type   [not null, note: '[D5] ENUM prevents free-text actor types that break GROUP BY / analytics queries']
+  action        varchar(100) [not null, note: 'Verb-noun dot notation for easy pattern matching. Examples: quiz.created, quiz.status_changed, submission.flagged, participant.otp_verified, question.deleted']
+  resource_type varchar(100) [not null, note: 'Entity class of the affected resource: quiz, submission, participant, question, admin_user']
+  resource_id   uuid         [not null, note: 'UUID of the affected entity. Combined with resource_type to uniquely identify any entity across the system.']
+  old_value     jsonb        [note: '[D4] Full JSON snapshot of the entity BEFORE the change. NULL on CREATE actions. Enables full change history replay and diff views.']
+  new_value     jsonb        [note: '[D4] Full JSON snapshot of the entity AFTER the change. NULL on DELETE actions. Compare with old_value for change diffs.']
+  ip_address    inet         [note: 'PostgreSQL native inet type — supports CIDR operators (<<, >>), subnet queries, and GiST indexing for IP range lookups. More powerful than storing as varchar.']
+  user_agent    text         [note: 'Browser/client string. Combined with ip_address for security analysis and suspicious activity detection.']
+  created_at    timestamptz  [not null, default: `now()`, note: '[D3] Also the RANGE partition key for monthly pruning']
+
+  indexes {
+    (resource_type, resource_id) [name: 'idx_audit_resource', note: 'Primary audit query: full change history of a specific entity. Admin: show all changes to quiz abc123.']
+    (actor_id, actor_type)       [name: 'idx_audit_actor', note: 'Compliance query: all actions taken by a specific admin or participant']
+    created_at                   [name: 'idx_audit_created_at', note: 'Time-range queries + partition pruning key for RANGE partitioned table']
+  }
+}
+
+
+// ── FOREIGN KEYS ──────────────────────────────────────────────────────────────
+// All declared here (not inline) to make cascade semantics explicit and visible
+
+// Admin owns quizzes — restrict delete while quizzes exist
+Ref fk_quiz_admin: quizzes.created_by > admin_users.id [delete: restrict]
+
+// Questions belong to quiz — cascade: no orphaned questions
+Ref fk_question_quiz: questions.quiz_id > quizzes.id [delete: cascade]
+
+// OTPs belong to participant — cascade: clean up verification state
+Ref fk_otp_participant: otps.participant_id > participants.id [delete: cascade]
+
+// Quiz access records belong to quiz — cascade: no orphaned memberships
+Ref fk_qp_quiz: quiz_participants.quiz_id > quizzes.id [delete: cascade]
+
+// Participant cannot be deleted while enrolled in a quiz
+Ref fk_qp_participant: quiz_participants.participant_id > participants.id [delete: restrict]
+
+// Submissions belong to quiz — RESTRICT not CASCADE
+// Preserves analytics and audit data even after quiz is archived/deleted
+// App layer MUST prevent quiz deletion when status != archived
+Ref fk_submission_quiz: submissions.quiz_id > quizzes.id [delete: restrict]
+
+// Participant cannot be deleted while submissions exist (GDPR: use anonymize, not delete)
+Ref fk_submission_participant: submissions.participant_id > participants.id [delete: restrict]

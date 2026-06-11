@@ -1,0 +1,17 @@
+{
+  "name": "@quiz/database",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "migrate:create": "node-pg-migrate create",
+    "migrate:up": "DATABASE_URL=${DATABASE_URL:-postgres://quiz_admin:quiz_secret_dev@localhost:5432/quiz} node-pg-migrate up",
+    "migrate:down": "DATABASE_URL=${DATABASE_URL:-postgres://quiz_admin:quiz_secret_dev@localhost:5432/quiz} node-pg-migrate down"
+  },
+  "dependencies": {
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "node-pg-migrate": "^7.5.0",
+    "typescript": "^5.5.4"
+  }
+}
