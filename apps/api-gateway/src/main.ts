@@ -3,10 +3,12 @@ import cors from "@fastify/cors";
 import dotenv from "dotenv";
 import { loadConfig } from "@quiz/config";
 import { logger } from "@quiz/logger";
+import { validatorCompiler, serializerCompiler } from "fastify-type-provider-zod";
 
 import dbPlugin from "./plugins/db.plugin";
 import redisPlugin from "./plugins/redis.plugin";
 import rabbitmqPlugin from "./plugins/rabbitmq.plugin";
+import swaggerPlugin from "./plugins/swagger.plugin";
 
 import healthRoutes from './domains/health/health.handler';
 import adminRoutes from './domains/admin/admin.routes';
@@ -26,6 +28,10 @@ async function main() {
     trustProxy: true,
   });
 
+  // Enable Zod type-safe validators & serializers
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
   // CORS
   await app.register(cors, { origin: true });
 
@@ -33,6 +39,7 @@ async function main() {
   await app.register(dbPlugin, { config });
   await app.register(redisPlugin, { config });
   await app.register(rabbitmqPlugin, { config });
+  await app.register(swaggerPlugin);
 
   // api route handlers
   await app.register(healthRoutes);

@@ -21,6 +21,10 @@ declare module 'fastify' {
   }
 }
 
+
+
+
+
 interface DbPluginOptions {
   config: AppConfig;
 }
