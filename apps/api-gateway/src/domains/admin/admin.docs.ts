@@ -72,9 +72,10 @@ export const adminDocs = {
     },
   },
   listQuizzes: {
-    description: 'List all quizzes with pagination.',
+    description: 'List all quizzes with pagination. Optionally filter by status.',
     tags: ['Admin Quizzes'],
     security: [{ bearerAuth: [] }],
+    querystring: schemas.listQuizzesQuerySchema,
     response: {
       200: schemas.getQuizzesResponseSchema,
       401: schemas.errorResponseSchema,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QUIZ_STATUSES } from '../../constants/quiz';
 
 // ─── Shared Schemas ─────────────────────────────────────────────────────────
 
@@ -100,8 +101,38 @@ export const simpleSuccessMessageSchema = z.object({
   message: z.string(),
 });
 
+export const listQuizzesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.enum(QUIZ_STATUSES).optional(),
+});
+
+// pg returns timestamptz columns as Date objects — transform to ISO string for JSON output
+const pgTimestamp = z.union([z.string(), z.date()]).transform(v =>
+  v instanceof Date ? v.toISOString() : v
+);
+
+export const quizSummarySchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  description: z.string().nullable(),
+  status: z.enum(QUIZ_STATUSES),
+  start_time: pgTimestamp,
+  end_time: pgTimestamp,
+  question_count: z.number(),
+  participant_count: z.number(),
+  share_token: z.string(),
+  created_at: pgTimestamp,
+});
+
 export const getQuizzesResponseSchema = z.object({
-  quizzes: z.array(z.any()),
+  quizzes: z.array(quizSummarySchema),
+  pagination: z.object({
+    total: z.number(),
+    page: z.number(),
+    limit: z.number(),
+    total_pages: z.number(),
+  }),
 });
 
 export const getQuizResponseSchema = z.object({

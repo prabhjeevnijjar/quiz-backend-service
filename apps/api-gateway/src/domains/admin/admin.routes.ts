@@ -95,8 +95,17 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   });
 
   typedFastify.get('/admin/quizzes', { preHandler: adminAuth, schema: adminDocs.listQuizzes }, async (request, reply) => {
-    // TODO: List all quizzes with pagination
-    return reply.send({ quizzes: [] });
+    const { page, limit, status } = request.query;
+    const { quizzes, total } = await quizService.listQuizzes(request.admin!.id, page, limit, status);
+    return reply.send({
+      quizzes,
+      pagination: {
+        total,
+        page,
+        limit,
+        total_pages: Math.ceil(total / limit),
+      },
+    });
   });
 
   typedFastify.get('/admin/quizzes/:id', { preHandler: adminAuth, schema: adminDocs.getQuiz }, async (request, reply) => {

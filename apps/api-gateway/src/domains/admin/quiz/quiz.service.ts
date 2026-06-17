@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
-import { AdminQuizRepository } from './quiz.repository';
+import { AdminQuizRepository, ListQuizzesResult } from './quiz.repository';
 
 export interface QuizSettings {
   shuffle_questions: boolean;
@@ -57,6 +57,15 @@ export class AdminQuizService {
 
     // Unreachable — loop always returns or throws
     throw new Error('Failed to generate a unique share token');
+  }
+
+  async listQuizzes(
+    adminId: string,
+    page: number,
+    limit: number,
+    status?: string,
+  ): Promise<ListQuizzesResult> {
+    return this.repo.listQuizzes({ adminId, page, limit, status });
   }
 
   async updateQuizDetails() { }
