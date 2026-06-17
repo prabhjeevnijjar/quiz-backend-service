@@ -82,8 +82,16 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   // ─── Quiz Management ────────────────────────────────────────────────────────
 
   typedFastify.post('/admin/quizzes', { preHandler: adminAuth, schema: adminDocs.createQuiz }, async (request, reply) => {
-    // TODO: Create quiz (Title, Description, initial settings)
-    return reply.status(201).send({ message: 'Quiz created (Not Implemented)' });
+    try {
+      const quizId = await quizService.createNewQuiz(request.body, request.admin!.id);
+      return reply.status(201).send({ success: true, quizId });
+    } catch (err: any) {
+      return reply.status(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: err.message || 'Failed to create quiz',
+      });
+    }
   });
 
   typedFastify.get('/admin/quizzes', { preHandler: adminAuth, schema: adminDocs.listQuizzes }, async (request, reply) => {

@@ -52,6 +52,41 @@ export const createAdminResponse201Schema = z.object({
 
 // ─── Quiz Management Schemas ─────────────────────────────────────────────────
 
+export const createQuizBodySchema = z.object({
+  title: z.string().min(1).max(500),
+  description: z.string().optional(),
+  start_time: z.string().datetime({ message: 'start_time must be a valid ISO 8601 datetime' }),
+  end_time: z.string().datetime({ message: 'end_time must be a valid ISO 8601 datetime' }),
+  password: z.string().min(1).optional(),
+  settings: z.object({
+    shuffle_questions: z.boolean(),
+    show_leaderboard: z.boolean(),
+    max_participants: z.number().int().positive().optional(),
+    allow_late_join: z.boolean(),
+    late_join_grace_period_minutes: z.number().int().min(1).max(60).optional(),
+  }).superRefine((settings, ctx) => {
+    if (settings.allow_late_join && settings.late_join_grace_period_minutes === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['late_join_grace_period_minutes'],
+        message: 'late_join_grace_period_minutes is required when allow_late_join is true',
+      });
+    }
+    if (!settings.allow_late_join && settings.late_join_grace_period_minutes !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['late_join_grace_period_minutes'],
+        message: 'late_join_grace_period_minutes has no effect when allow_late_join is false',
+      });
+    }
+  }),
+});
+
+export const createQuizResponse201Schema = z.object({
+  success: z.boolean(),
+  quizId: z.string().uuid(),
+});
+
 export const quizIdParamsSchema = z.object({
   id: z.string().uuid().describe('The UUID of the quiz'),
 });

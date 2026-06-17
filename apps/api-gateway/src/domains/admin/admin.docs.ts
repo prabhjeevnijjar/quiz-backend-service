@@ -16,7 +16,7 @@ export const adminDocs = {
   // ─── Authentication ─────────────────────────────────────────────────────────
   login: {
     description: 'Log in as an administrator to receive access and refresh tokens.',
-    tags: ['Admin Auth'],
+    tags: ['Super Admin Auth'],
     body: schemas.loginBodySchema,
     response: {
       200: schemas.loginResponse200Schema,
@@ -26,7 +26,7 @@ export const adminDocs = {
   },
   refresh: {
     description: 'Refresh the access token using a valid refresh token with rotation.',
-    tags: ['Admin Auth'],
+    tags: ['Super Admin Auth'],
     body: schemas.refreshBodySchema,
     response: {
       200: schemas.refreshResponse200Schema,
@@ -36,7 +36,7 @@ export const adminDocs = {
   },
   logout: {
     description: 'Log out the administrator, revoking their refresh token family in Redis.',
-    tags: ['Admin Auth'],
+    tags: ['Super Admin Auth'],
     body: schemas.logoutBodySchema,
     response: {
       200: schemas.logoutResponse200Schema,
@@ -47,7 +47,7 @@ export const adminDocs = {
   // ─── Admin Users ──────────────────────────────────────────────────────────
   createAdmin: {
     description: 'Register a new administrator.',
-    tags: ['Admin Users'],
+    tags: ['Create admin Users'],
     security: [{ bearerAuth: [] }],
     body: schemas.createAdminBodySchema,
     response: {
@@ -63,8 +63,10 @@ export const adminDocs = {
     description: 'Create a new quiz draft.',
     tags: ['Admin Quizzes'],
     security: [{ bearerAuth: [] }],
+    body: schemas.createQuizBodySchema,
     response: {
-      201: schemas.simpleSuccessMessageSchema,
+      201: schemas.createQuizResponse201Schema,
+      400: schemas.errorResponseSchema,
       401: schemas.errorResponseSchema,
       403: schemas.errorResponseSchema,
     },
