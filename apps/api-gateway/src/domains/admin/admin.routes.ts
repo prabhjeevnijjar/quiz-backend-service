@@ -109,8 +109,8 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   });
 
   typedFastify.get('/admin/quizzes/:id', { preHandler: adminAuth, schema: adminDocs.getQuiz }, async (request, reply) => {
-    // TODO: Get quiz details including questions and schedule
-    return reply.send({ quiz: {} });
+    const quiz = await quizService.getQuizById(request.params.id, request.admin!.id);
+    return reply.send({ quiz });
   });
 
   typedFastify.patch('/admin/quizzes/:id', { preHandler: adminAuth, schema: adminDocs.updateQuiz }, async (request, reply) => {

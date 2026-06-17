@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { QUIZ_STATUSES } from '../../constants/quiz';
+import { QUIZ_STATUSES, QUESTION_TYPES } from '../../constants/quiz';
 
 // ─── Shared Schemas ─────────────────────────────────────────────────────────
 
@@ -135,8 +135,42 @@ export const getQuizzesResponseSchema = z.object({
   }),
 });
 
+const questionSchema = z.object({
+  id: z.string().uuid(),
+  question_text: z.string(),
+  question_type: z.enum(QUESTION_TYPES),
+  options: z.array(z.object({ id: z.string().uuid(), text: z.string() })).nullable(),
+  correct_answer: z.union([z.string(), z.array(z.string())]),
+  points: z.number(),
+  order_index: z.number(),
+  created_at: pgTimestamp,
+  updated_at: pgTimestamp,
+});
+
+const quizSettingsSchema = z.object({
+  shuffle_questions: z.boolean(),
+  show_leaderboard: z.boolean(),
+  max_participants: z.number().optional(),
+  allow_late_join: z.boolean(),
+  late_join_grace_period_minutes: z.number().optional(),
+});
+
 export const getQuizResponseSchema = z.object({
-  quiz: z.any(),
+  quiz: z.object({
+    id: z.string().uuid(),
+    title: z.string(),
+    description: z.string().nullable(),
+    status: z.enum(QUIZ_STATUSES),
+    start_time: pgTimestamp,
+    end_time: pgTimestamp,
+    question_count: z.number(),
+    participant_count: z.number(),
+    share_token: z.string(),
+    settings: quizSettingsSchema,
+    questions: z.array(questionSchema),
+    created_at: pgTimestamp,
+    updated_at: pgTimestamp,
+  }),
 });
 
 export const getQuizLinkResponseSchema = z.object({

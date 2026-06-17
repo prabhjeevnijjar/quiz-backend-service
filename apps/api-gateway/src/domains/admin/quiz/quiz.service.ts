@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
-import { AdminQuizRepository, ListQuizzesResult } from './quiz.repository';
+import { AdminQuizRepository, ListQuizzesResult, QuizDetail } from './quiz.repository';
+import { NotFoundError } from '../../../errors';
 
 export interface QuizSettings {
   shuffle_questions: boolean;
@@ -16,7 +17,7 @@ export interface CreateQuizInput {
   start_time: string;
   end_time: string;
   password?: string;
-  settings?: QuizSettings;
+  settings: QuizSettings;
 }
 
 export class AdminQuizService {
@@ -46,7 +47,7 @@ export class AdminQuizService {
           passwordHash,
           startTime: input.start_time,
           endTime: input.end_time,
-          settings: input.settings ?? {},
+          settings: input.settings,
         });
       } catch (err: any) {
         const isTokenCollision =
@@ -66,6 +67,14 @@ export class AdminQuizService {
     status?: string,
   ): Promise<ListQuizzesResult> {
     return this.repo.listQuizzes({ adminId, page, limit, status });
+  }
+
+  async getQuizById(quizId: string, adminId: string): Promise<QuizDetail> {
+    const quiz = await this.repo.findQuizById(quizId, adminId);
+    if (!quiz) {
+      throw new NotFoundError('Quiz');
+    }
+    return quiz;
   }
 
   async updateQuizDetails() { }

@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
-import { QuizStatus } from '../../../constants/quiz';
+import { QuizStatus, QuestionType } from '../../../constants/quiz';
+import type { QuizSettings } from '../../../constants/quiz';
 
 export interface CreateQuizData {
   createdBy: string;
@@ -9,7 +10,7 @@ export interface CreateQuizData {
   passwordHash: string | null;
   startTime: string;
   endTime: string;
-  settings: object;
+  settings: QuizSettings;
 }
 
 export interface QuizSummary {
@@ -35,6 +36,34 @@ export interface ListQuizzesOptions {
 export interface ListQuizzesResult {
   quizzes: QuizSummary[];
   total: number;
+}
+
+export interface QuizQuestion {
+  id: string;
+  question_text: string;
+  question_type: QuestionType;
+  options: { id: string; text: string }[] | null;
+  correct_answer: string | string[];
+  points: number;
+  order_index: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QuizDetail {
+  id: string;
+  title: string;
+  description: string | null;
+  status: QuizStatus;
+  start_time: string;
+  end_time: string;
+  question_count: number;
+  participant_count: number;
+  share_token: string;
+  settings: QuizSettings;
+  questions: QuizQuestion[];
+  created_at: string;
+  updated_at: string;
 }
 
 export class AdminQuizRepository {
@@ -98,6 +127,35 @@ export class AdminQuizRepository {
     };
   }
 
-  async findQuizById() { }
+  async findQuizById(quizId: string, adminId: string): Promise<QuizDetail | null> {
+    const quizQuery = `
+      SELECT id, title, description, status, start_time, end_time,
+             question_count, participant_count, share_token, settings,
+             created_at, updated_at
+      FROM quizzes
+      WHERE id = $1 AND created_by = $2
+    `;
+
+    const questionsQuery = `
+      SELECT id, question_text, question_type, options, correct_answer,
+             points, order_index, created_at, updated_at
+      FROM questions
+      WHERE quiz_id = $1
+      ORDER BY order_index ASC
+    `;
+
+    const [quizRes, questionsRes] = await Promise.all([
+      this.readPool.query(quizQuery, [quizId, adminId]),
+      this.readPool.query(questionsQuery, [quizId]),
+    ]);
+
+    if (quizRes.rowCount === 0) return null;
+
+    return {
+      ...quizRes.rows[0],
+      questions: questionsRes.rows,
+    } as QuizDetail;
+  }
+
   async updateQuiz() { }
 }

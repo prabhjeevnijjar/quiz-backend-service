@@ -14,6 +14,16 @@ import healthRoutes from './domains/health/health.handler';
 import adminRoutes from './domains/admin/admin.routes';
 import participantRoutes from './domains/participant/participant.routes';
 
+const HTTP_STATUS_LABELS: Record<number, string> = {
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  409: 'Conflict',
+  422: 'Unprocessable Entity',
+  500: 'Internal Server Error',
+};
+
 async function main() {
   dotenv.config({
     path: process.env.NODE_ENV === "production" ? ".env" : ".env.dev", // for dev/localhost  use the .env.dev file for docker compose use .env.example
@@ -40,6 +50,16 @@ async function main() {
   await app.register(redisPlugin, { config });
   await app.register(rabbitmqPlugin, { config });
   await app.register(swaggerPlugin);
+
+  app.setErrorHandler((err, _request, reply) => {
+    const statusCode = err.statusCode ?? 500;
+    app.log.error({ err, statusCode }, err.message);
+    reply.status(statusCode).send({
+      statusCode,
+      error: HTTP_STATUS_LABELS[statusCode] ?? 'Internal Server Error',
+      message: statusCode >= 500 ? 'An unexpected error occurred' : err.message,
+    });
+  });
 
   // api route handlers
   await app.register(healthRoutes);
