@@ -25,7 +25,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
 
   const adminAuth = authenticate(['admin']);
 
-  // ─── Authentication ─────────────────────────────────────────────────────────
+  //Auth
 
   typedFastify.post('/admin/login', { schema: adminDocs.login }, async (request, reply) => {
     const { email, password } = request.body;
@@ -79,7 +79,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // ─── Quiz Management ────────────────────────────────────────────────────────
+  //Quiz Management
 
   typedFastify.post('/admin/quizzes', { preHandler: adminAuth, schema: adminDocs.createQuiz }, async (request, reply) => {
     try {
@@ -151,5 +151,22 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   typedFastify.get('/admin/quizzes/:id/participants/:participantId/score', { preHandler: adminAuth, schema: adminDocs.getParticipantScore }, async (request, reply) => {
     // TODO: View specific participant's final score
     return reply.send({ score: 0 });
+  });
+
+  //Question Management
+
+  typedFastify.post('/admin/quizzes/:id/questions', { preHandler: adminAuth, schema: adminDocs.addQuestions }, async (request, reply) => {
+    const result = await quizService.addQuestionsToQuiz(request.params.id, request.admin!.id, request.body.questions);
+    return reply.status(201).send({ success: true, ...result });
+  });
+
+  typedFastify.patch('/admin/quizzes/:id/questions/:questionId', { preHandler: adminAuth, schema: adminDocs.updateQuestion }, async (request, reply) => {
+    const question = await quizService.updateQuestion(request.params.id, request.admin!.id, request.params.questionId, request.body);
+    return reply.send({ success: true, question });
+  });
+
+  typedFastify.delete('/admin/quizzes/:id/questions/:questionId', { preHandler: adminAuth, schema: adminDocs.deleteQuestion }, async (request, reply) => {
+    await quizService.deleteQuestion(request.params.id, request.admin!.id, request.params.questionId);
+    return reply.send({ success: true, message: 'Question deleted successfully' });
   });
 }

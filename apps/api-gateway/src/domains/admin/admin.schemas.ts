@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { QUIZ_STATUSES, QUESTION_TYPES } from '../../constants/quiz';
+import { QUIZ_STATUSES } from '../../constants/quiz';
 
 // ─── Shared Schemas ─────────────────────────────────────────────────────────
 
@@ -135,17 +135,28 @@ export const getQuizzesResponseSchema = z.object({
   }),
 });
 
-const questionSchema = z.object({
+const questionBase = {
   id: z.string().uuid(),
   question_text: z.string(),
-  question_type: z.enum(QUESTION_TYPES),
-  options: z.array(z.object({ id: z.string().uuid(), text: z.string() })).nullable(),
-  correct_answer: z.union([z.string(), z.array(z.string())]),
   points: z.number(),
   order_index: z.number(),
   created_at: pgTimestamp,
   updated_at: pgTimestamp,
-});
+};
+
+const optionSchema = z.object({ id: z.string().uuid(), text: z.string() });
+
+// Discriminated union — each type enforces its own options + correct_answer shape
+export const questionSchema = z.discriminatedUnion('question_type', [
+  // Single correct option selected from a list
+  z.object({ ...questionBase, question_type: z.literal('multiple_choice'), options: z.array(optionSchema), correct_answer: z.string() }),
+  // Multiple correct options selected from a list
+  z.object({ ...questionBase, question_type: z.literal('multi_select'), options: z.array(optionSchema), correct_answer: z.array(z.string()) }),
+  // Stored as MCQ internally with two options (true / false)
+  z.object({ ...questionBase, question_type: z.literal('true_false'), options: z.array(optionSchema).length(2), correct_answer: z.string() }),
+  // Free text — no options, no correct_answer (manual grading)
+  z.object({ ...questionBase, question_type: z.literal('short_answer'), options: z.null(), correct_answer: z.null() }),
+]);
 
 const quizSettingsSchema = z.object({
   shuffle_questions: z.boolean(),
@@ -171,6 +182,45 @@ export const getQuizResponseSchema = z.object({
     created_at: pgTimestamp,
     updated_at: pgTimestamp,
   }),
+});
+
+// ─── Question Management Schemas ─────────────────────────────────────────────
+
+const addQuestionInputBase = {
+  question_text: z.string().min(1),
+  points: z.number().int().min(1).default(1),
+};
+
+export const addQuestionItemSchema = z.discriminatedUnion('question_type', [
+  z.object({ ...addQuestionInputBase, question_type: z.literal('multiple_choice'), options: z.array(optionSchema).min(2), correct_answer: z.string() }),
+  z.object({ ...addQuestionInputBase, question_type: z.literal('multi_select'), options: z.array(optionSchema).min(2), correct_answer: z.array(z.string()).min(1) }),
+  z.object({ ...addQuestionInputBase, question_type: z.literal('true_false'), options: z.array(optionSchema).length(2), correct_answer: z.string() }),
+  z.object({ ...addQuestionInputBase, question_type: z.literal('short_answer'), options: z.null(), correct_answer: z.null() }),
+]);
+
+export const addQuestionsBodySchema = z.object({
+  questions: z.array(addQuestionItemSchema).min(1).max(100),
+});
+
+export const questionParamsSchema = z.object({
+  id: z.string().uuid().describe('The UUID of the quiz'),
+  questionId: z.string().uuid().describe('The UUID of the question'),
+});
+
+export const addQuestionsResponse201Schema = z.object({
+  success: z.boolean(),
+  addedCount: z.number(),
+  questions: z.array(questionSchema),
+});
+
+export const updateQuestionResponse200Schema = z.object({
+  success: z.boolean(),
+  question: questionSchema,
+});
+
+export const deleteQuestionResponse200Schema = z.object({
+  success: z.boolean(),
+  message: z.string(),
 });
 
 export const getQuizLinkResponseSchema = z.object({

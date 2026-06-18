@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
-import { AdminQuizRepository, ListQuizzesResult, QuizDetail } from './quiz.repository';
-import { NotFoundError } from '../../../errors';
+import { AdminQuizRepository, AddQuestionData, ListQuizzesResult, QuizDetail, QuizQuestion } from './quiz.repository';
+import { NotFoundError, BadRequestError } from '../../../errors';
 
 export interface QuizSettings {
   shuffle_questions: boolean;
@@ -75,6 +75,40 @@ export class AdminQuizService {
       throw new NotFoundError('Quiz');
     }
     return quiz;
+  }
+
+  async addQuestionsToQuiz(
+    quizId: string,
+    adminId: string,
+    questions: AddQuestionData[],
+  ): Promise<{ addedCount: number; questions: QuizQuestion[] }> {
+    const quiz = await this.repo.findQuizForModification(quizId, adminId);
+    if (!quiz) throw new NotFoundError('Quiz');
+    if (quiz.status !== 'draft') throw new BadRequestError('Quiz can only be modified in draft status');
+    const inserted = await this.repo.addQuestions(quizId, adminId, questions);
+    return { addedCount: inserted.length, questions: inserted };
+  }
+
+  async updateQuestion(
+    quizId: string,
+    adminId: string,
+    questionId: string,
+    data: AddQuestionData,
+  ): Promise<QuizQuestion> {
+    const quiz = await this.repo.findQuizForModification(quizId, adminId);
+    if (!quiz) throw new NotFoundError('Quiz');
+    if (quiz.status !== 'draft') throw new BadRequestError('Quiz can only be modified in draft status');
+    const updated = await this.repo.updateQuestion(questionId, quizId, data);
+    if (!updated) throw new NotFoundError('Question');
+    return updated;
+  }
+
+  async deleteQuestion(quizId: string, adminId: string, questionId: string): Promise<void> {
+    const quiz = await this.repo.findQuizForModification(quizId, adminId);
+    if (!quiz) throw new NotFoundError('Quiz');
+    if (quiz.status !== 'draft') throw new BadRequestError('Quiz can only be modified in draft status');
+    const deleted = await this.repo.deleteQuestion(questionId, quizId);
+    if (!deleted) throw new NotFoundError('Question');
   }
 
   async updateQuizDetails() { }

@@ -181,4 +181,47 @@ export const adminDocs = {
       403: schemas.errorResponseSchema,
     },
   },
+
+  //Question Management
+  addQuestions: {
+    description: 'Add one or more questions to a quiz. Only allowed while the quiz is in Draft state.',
+    tags: ['Admin Quizzes'],
+    security: [{ bearerAuth: [] }],
+    params: schemas.quizIdParamsSchema,
+    body: schemas.addQuestionsBodySchema,
+    response: {
+      201: schemas.addQuestionsResponse201Schema,
+      400: schemas.errorResponseSchema,
+      401: schemas.errorResponseSchema,
+      403: schemas.errorResponseSchema,
+      404: schemas.errorResponseSchema,
+    },
+  },
+  updateQuestion: {
+    description: 'Replace a question\'s content. Only allowed while the quiz is in Draft state.',
+    tags: ['Admin Quizzes'],
+    security: [{ bearerAuth: [] }],
+    params: schemas.questionParamsSchema,
+    body: schemas.addQuestionItemSchema,
+    response: {
+      200: schemas.updateQuestionResponse200Schema,
+      400: schemas.errorResponseSchema,
+      401: schemas.errorResponseSchema,
+      403: schemas.errorResponseSchema,
+      404: schemas.errorResponseSchema,
+    },
+  },
+  deleteQuestion: {
+    description: 'Delete a question from a quiz. Only allowed while the quiz is in Draft state.',
+    tags: ['Admin Quizzes'],
+    security: [{ bearerAuth: [] }],
+    params: schemas.questionParamsSchema,
+    response: {
+      200: schemas.deleteQuestionResponse200Schema,
+      400: schemas.errorResponseSchema,
+      401: schemas.errorResponseSchema,
+      403: schemas.errorResponseSchema,
+      404: schemas.errorResponseSchema,
+    },
+  },
 } satisfies Record<string, FastifySchema>;
