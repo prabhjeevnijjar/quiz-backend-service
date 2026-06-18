@@ -98,10 +98,13 @@ export const adminDocs = {
     tags: ['Admin Quizzes'],
     security: [{ bearerAuth: [] }],
     params: schemas.quizIdParamsSchema,
+    body: schemas.updateQuizBodySchema,
     response: {
       200: schemas.simpleSuccessMessageSchema,
+      400: schemas.errorResponseSchema,
       401: schemas.errorResponseSchema,
       403: schemas.errorResponseSchema,
+      404: schemas.errorResponseSchema,
     },
   },
   scheduleQuiz: {

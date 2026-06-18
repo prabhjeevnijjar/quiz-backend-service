@@ -63,6 +63,15 @@ export interface QuizDetail {
   updated_at: string;
 }
 
+export interface UpdateQuizData {
+  title?: string;
+  description?: string;
+  startTime?: string;
+  endTime?: string;
+  passwordHash?: string;
+  settings?: QuizSettings;
+}
+
 export interface AddQuestionData {
   question_text: string;
   question_type: QuestionType;
@@ -256,5 +265,46 @@ export class AdminQuizRepository {
     }
   }
 
-  async updateQuiz() { }
+  async updateQuiz(quizId: string, adminId: string, data: UpdateQuizData): Promise<boolean> {
+    const client = await this.writePool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const lockRes = await client.query(
+        'SELECT id FROM quizzes WHERE id = $1 AND created_by = $2 FOR UPDATE',
+        [quizId, adminId]
+      );
+      if (lockRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+
+      const sets: string[] = [];
+      const params: unknown[] = [];
+
+      if (data.title !== undefined) { params.push(data.title); sets.push(`title = $${params.length}`); }
+      if (data.description !== undefined) { params.push(data.description); sets.push(`description = $${params.length}`); }
+      if (data.startTime !== undefined) { params.push(data.startTime); sets.push(`start_time = $${params.length}`); }
+      if (data.endTime !== undefined) { params.push(data.endTime); sets.push(`end_time = $${params.length}`); }
+      if (data.passwordHash !== undefined) { params.push(data.passwordHash); sets.push(`password_hash = $${params.length}`); }
+      if (data.settings !== undefined) { params.push(JSON.stringify(data.settings)); sets.push(`settings = $${params.length}`); }
+
+      if (sets.length > 0) {
+        sets.push('updated_at = now()');
+        params.push(quizId);
+        await client.query(
+          `UPDATE quizzes SET ${sets.join(', ')} WHERE id = $${params.length}`,
+          params
+        );
+      }
+
+      await client.query('COMMIT');
+      return true;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 }

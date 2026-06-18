@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
-import { AdminQuizRepository, AddQuestionData, ListQuizzesResult, QuizDetail, QuizQuestion } from './quiz.repository';
+import { AdminQuizRepository, AddQuestionData, ListQuizzesResult, QuizDetail, QuizQuestion, UpdateQuizData } from './quiz.repository';
 import { NotFoundError, BadRequestError } from '../../../errors';
 
 export interface QuizSettings {
@@ -9,6 +9,15 @@ export interface QuizSettings {
   max_participants?: number;
   allow_late_join: boolean;
   late_join_grace_period_minutes?: number; // required when allow_late_join is true
+}
+
+export interface UpdateQuizInput {
+  title?: string;
+  description?: string;
+  start_time?: string;
+  end_time?: string;
+  password?: string;
+  settings?: QuizSettings;
 }
 
 export interface CreateQuizInput {
@@ -111,7 +120,33 @@ export class AdminQuizService {
     if (!deleted) throw new NotFoundError('Question');
   }
 
-  async updateQuizDetails() { }
+  async updateQuizDetails(quizId: string, adminId: string, input: UpdateQuizInput): Promise<void> {
+    const quiz = await this.repo.findQuizById(quizId, adminId);
+    if (!quiz) throw new NotFoundError('Quiz');
+    if (quiz.status !== 'draft') throw new BadRequestError('Quiz can only be modified in draft status');
+
+    const effectiveStart = new Date(input.start_time ?? quiz.start_time);
+    const effectiveEnd = new Date(input.end_time ?? quiz.end_time);
+    if (effectiveEnd <= effectiveStart) {
+      throw new BadRequestError('end_time must be after start_time');
+    }
+
+    const repoData: UpdateQuizData = {
+      title: input.title,
+      description: input.description,
+      startTime: input.start_time,
+      endTime: input.end_time,
+      settings: input.settings,
+    };
+
+    if (input.password) {
+      const salt = await bcrypt.genSalt(10);
+      repoData.passwordHash = await bcrypt.hash(input.password, salt);
+    }
+
+    const updated = await this.repo.updateQuiz(quizId, adminId, repoData);
+    if (!updated) throw new NotFoundError('Quiz');
+  }
   async scheduleQuiz() { }
   async generateShareableLink() { }
 }

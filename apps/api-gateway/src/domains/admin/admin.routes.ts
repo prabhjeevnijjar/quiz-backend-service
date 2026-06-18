@@ -114,8 +114,8 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   });
 
   typedFastify.patch('/admin/quizzes/:id', { preHandler: adminAuth, schema: adminDocs.updateQuiz }, async (request, reply) => {
-    // TODO: Edit quiz (only allowed if in Draft state)
-    return reply.send({ message: 'Quiz updated (Not Implemented)' });
+    await quizService.updateQuizDetails(request.params.id, request.admin!.id, request.body);
+    return reply.send({ message: 'Quiz updated successfully' });
   });
 
   typedFastify.patch('/admin/quizzes/:id/schedule', { preHandler: adminAuth, schema: adminDocs.scheduleQuiz }, async (request, reply) => {
