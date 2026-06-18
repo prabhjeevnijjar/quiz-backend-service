@@ -118,14 +118,9 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     return reply.send({ message: 'Quiz updated successfully' });
   });
 
-  typedFastify.patch('/admin/quizzes/:id/schedule', { preHandler: adminAuth, schema: adminDocs.scheduleQuiz }, async (request, reply) => {
-    // TODO: Schedule quiz start and end times
-    return reply.send({ message: 'Quiz scheduled (Not Implemented)' });
-  });
-
   typedFastify.get('/admin/quizzes/:id/link', { preHandler: adminAuth, schema: adminDocs.getQuizLink }, async (request, reply) => {
-    // TODO: Generate or retrieve shareable quiz link
-    return reply.send({ link: 'https://quiz.example.com/q/slug' });
+    const link = await quizService.generateShareableLink(request.params.id, request.admin!.id, fastify.config.PUBLIC_BASE_URL);
+    return reply.send({ link });
   });
 
   typedFastify.post('/admin/quizzes/:id/invites', { preHandler: adminAuth, schema: adminDocs.createInvites }, async (request, reply) => {
@@ -133,13 +128,8 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     return reply.status(202).send({ message: 'Invites queued (Not Implemented)' });
   });
 
-  typedFastify.get('/admin/quizzes/:id/analytics', { preHandler: adminAuth, schema: adminDocs.getQuizAnalytics }, async (request, reply) => {
-    // TODO: View quiz analytics
-    return reply.send({ analytics: {} });
-  });
-
   typedFastify.get('/admin/quizzes/:id/participants', { preHandler: adminAuth, schema: adminDocs.listQuizParticipants }, async (request, reply) => {
-    // TODO: List all participants for a given quiz
+    // TODO: List all participants for a given quiz only after the quiz has
     return reply.send({ participants: [] });
   });
 

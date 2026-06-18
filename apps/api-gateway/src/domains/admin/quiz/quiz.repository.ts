@@ -168,6 +168,14 @@ export class AdminQuizRepository {
     } as QuizDetail;
   }
 
+  async getShareToken(quizId: string, adminId: string): Promise<string | null> {
+    const res = await this.readPool.query(
+      'SELECT share_token FROM quizzes WHERE id = $1 AND created_by = $2',
+      [quizId, adminId]
+    );
+    return res.rowCount === 0 ? null : (res.rows[0].share_token as string);
+  }
+
   async findQuizForModification(quizId: string, adminId: string): Promise<{ id: string; status: QuizStatus } | null> {
     const res = await this.readPool.query(
       'SELECT id, status FROM quizzes WHERE id = $1 AND created_by = $2',

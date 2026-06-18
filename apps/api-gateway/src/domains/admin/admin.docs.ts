@@ -127,6 +127,7 @@ export const adminDocs = {
       200: schemas.getQuizLinkResponseSchema,
       401: schemas.errorResponseSchema,
       403: schemas.errorResponseSchema,
+      404: schemas.errorResponseSchema,
     },
   },
   createInvites: {

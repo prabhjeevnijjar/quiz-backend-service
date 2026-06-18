@@ -2,6 +2,8 @@ export type AppConfig = {
   NODE_ENV: 'development' | 'production' | 'test';
   PORT: number;
   HOST: string;
+  /** Public base URL participants use to reach the app, e.g. https://quiz.example.com */
+  PUBLIC_BASE_URL: string;
 
   PG_WRITE_HOST?: string;
   PG_READ_HOST?: string;
@@ -25,6 +27,7 @@ export function loadConfig(): AppConfig {
     NODE_ENV: (process.env.NODE_ENV as AppConfig['NODE_ENV']) ?? 'development',
     PORT: Number(process.env.PORT ?? 3000),
     HOST: process.env.HOST ?? '0.0.0.0',
+    PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000',
 
     PG_WRITE_HOST: process.env.PG_WRITE_HOST,
     PG_READ_HOST: process.env.PG_READ_HOST,

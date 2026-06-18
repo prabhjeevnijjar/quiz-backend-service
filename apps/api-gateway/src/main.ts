@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import dotenv from "dotenv";
 import { loadConfig } from "@quiz/config";
+import type { AppConfig } from "@quiz/config";
 import { logger } from "@quiz/logger";
 import { validatorCompiler, serializerCompiler } from "fastify-type-provider-zod";
 
@@ -13,6 +14,13 @@ import swaggerPlugin from "./plugins/swagger.plugin";
 import healthRoutes from './domains/health/health.handler';
 import adminRoutes from './domains/admin/admin.routes';
 import participantRoutes from './domains/participant/participant.routes';
+
+// Expose the loaded config throughout the app via fastify.config
+declare module 'fastify' {
+  interface FastifyInstance {
+    config: AppConfig;
+  }
+}
 
 const HTTP_STATUS_LABELS: Record<number, string> = {
   400: 'Bad Request',
@@ -37,6 +45,8 @@ async function main() {
     requestIdHeader: "x-request-id",
     trustProxy: true,
   });
+
+  app.decorate('config', config);
 
   // Enable Zod type-safe validators & serializers
   app.setValidatorCompiler(validatorCompiler);

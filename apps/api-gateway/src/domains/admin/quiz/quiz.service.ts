@@ -120,6 +120,13 @@ export class AdminQuizService {
     if (!deleted) throw new NotFoundError('Question');
   }
 
+  async generateShareableLink(quizId: string, adminId: string, baseUrl: string): Promise<string> {
+    const shareToken = await this.repo.getShareToken(quizId, adminId);
+    if (!shareToken) throw new NotFoundError('Quiz');
+    // Participants enter the quiz via the public join route keyed by share_token.
+    return `${baseUrl.replace(/\/+$/, '')}/quizzes/${shareToken}/join`;
+  }
+
   async updateQuizDetails(quizId: string, adminId: string, input: UpdateQuizInput): Promise<void> {
     const quiz = await this.repo.findQuizById(quizId, adminId);
     if (!quiz) throw new NotFoundError('Quiz');
@@ -148,5 +155,4 @@ export class AdminQuizService {
     if (!updated) throw new NotFoundError('Quiz');
   }
   async scheduleQuiz() { }
-  async generateShareableLink() { }
 }
