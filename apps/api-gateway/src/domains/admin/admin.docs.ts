@@ -131,14 +131,17 @@ export const adminDocs = {
     },
   },
   createInvites: {
-    description: 'Manually trigger invitation emails via RabbitMQ Outbox event sourcing.',
+    description: 'Record participants for a quiz and trigger their invitation emails via the RabbitMQ outbox. Idempotent per email.',
     tags: ['Admin Quizzes'],
     security: [{ bearerAuth: [] }],
     params: schemas.quizIdParamsSchema,
+    body: schemas.createInvitesBodySchema,
     response: {
-      202: schemas.simpleSuccessMessageSchema,
+      202: schemas.createInvitesResponse202Schema,
+      400: schemas.errorResponseSchema,
       401: schemas.errorResponseSchema,
       403: schemas.errorResponseSchema,
+      404: schemas.errorResponseSchema,
     },
   },
   getQuizAnalytics: {

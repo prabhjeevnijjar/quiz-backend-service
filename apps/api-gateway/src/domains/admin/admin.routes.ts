@@ -15,7 +15,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   const typedFastify = fastify.withTypeProvider<ZodTypeProvider>();
 
   const quizRepo = new AdminQuizRepository(fastify.db.write, fastify.db.read);
-  const quizService = new AdminQuizService(quizRepo);
+  const quizService = new AdminQuizService(quizRepo, fastify.amqp.channel);
 
   const analyticsRepo = new AdminAnalyticsRepository(fastify.db.read);
   const analyticsService = new AdminAnalyticsService(analyticsRepo);
@@ -124,8 +124,13 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   });
 
   typedFastify.post('/admin/quizzes/:id/invites', { preHandler: adminAuth, schema: adminDocs.createInvites }, async (request, reply) => {
-    // TODO: Manually trigger invitation emails via RabbitMQ Outbox
-    return reply.status(202).send({ message: 'Invites queued (Not Implemented)' });
+    const { invitedCount, publishedCount } = await quizService.sendInvites(
+      request.params.id,
+      request.admin!.id,
+      request.body.invitees,
+      fastify.config.PUBLIC_BASE_URL,
+    );
+    return reply.status(202).send({ message: 'Invites queued', invitedCount, publishedCount });
   });
 
   typedFastify.get('/admin/quizzes/:id/participants', { preHandler: adminAuth, schema: adminDocs.listQuizParticipants }, async (request, reply) => {

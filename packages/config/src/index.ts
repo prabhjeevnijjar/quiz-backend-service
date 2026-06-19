@@ -20,7 +20,24 @@ export type AppConfig = {
 
   RABBITMQ_URL?: string;
   JWT_SECRET?: string;
+
+  // ─── Email (mail-worker) ───────────────────────────────────────────────────
+  /** Email provider to use. Default 'resend'. */
+  EMAIL_PROVIDER: string;
+  /** API key for the chosen provider (Resend: RESEND_API_KEY). */
+  RESEND_API_KEY?: string;
+  /** Default From header, e.g. "Quiz Platform <onboarding@resend.dev>". */
+  EMAIL_FROM: string;
+  /** Max in-flight messages the mail-worker pulls from each queue. */
+  EMAIL_PREFETCH: number;
 };
+
+// Treats blank ("EMAIL_PREFETCH="), non-numeric, and <= 0 values as "use the default"
+// rather than letting Number('') === 0 silently flow through (e.g. prefetch(0) = unlimited).
+function positiveIntOr(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
 
 export function loadConfig(): AppConfig {
   return {
@@ -44,5 +61,10 @@ export function loadConfig(): AppConfig {
 
     RABBITMQ_URL: process.env.RABBITMQ_URL,
     JWT_SECRET: process.env.JWT_SECRET,
+
+    EMAIL_PROVIDER: process.env.EMAIL_PROVIDER ?? 'resend',
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    EMAIL_FROM: process.env.EMAIL_FROM ?? 'Quiz Platform <onboarding@resend.dev>',
+    EMAIL_PREFETCH: positiveIntOr(process.env.EMAIL_PREFETCH, 10),
   };
 }

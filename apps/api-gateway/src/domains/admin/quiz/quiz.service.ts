@@ -1,6 +1,8 @@
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
-import { AdminQuizRepository, AddQuestionData, ListQuizzesResult, QuizDetail, QuizQuestion, UpdateQuizData } from './quiz.repository';
+import type { ConfirmChannel } from 'amqplib';
+import { EXCHANGE_NAMES, INVITES_ROUTING_KEY } from '@quiz/messaging';
+import { AdminQuizRepository, AddQuestionData, ListQuizzesResult, QuizDetail, QuizQuestion, UpdateQuizData, InviteParticipantInput } from './quiz.repository';
 import { NotFoundError, BadRequestError } from '../../../errors';
 
 export interface QuizSettings {
@@ -29,8 +31,21 @@ export interface CreateQuizInput {
   settings: QuizSettings;
 }
 
+export interface SendInvitesInput {
+  email: string;
+  name?: string;
+}
+
+export interface SendInvitesResult {
+  invitedCount: number;
+  publishedCount: number;
+}
+
 export class AdminQuizService {
-  constructor(private readonly repo: AdminQuizRepository) { }
+  constructor(
+    private readonly repo: AdminQuizRepository,
+    private readonly amqpChannel: ConfirmChannel,
+  ) { }
 
   async createNewQuiz(input: CreateQuizInput, adminId: string): Promise<string> {
     const start = new Date(input.start_time);
@@ -125,6 +140,71 @@ export class AdminQuizService {
     if (!shareToken) throw new NotFoundError('Quiz');
     // Participants enter the quiz via the public join route keyed by share_token.
     return `${baseUrl.replace(/\/+$/, '')}/quizzes/${shareToken}/join`;
+  }
+
+  /**
+   * Records the given invitees against the quiz and stages their invitation events via
+   * the transactional outbox (atomic), then best-effort publishes those events to the
+   * quiz.invites exchange. Publish is best-effort: any event that fails to publish stays
+   * in outbox_events with published=false for a relay to pick up later, so the durably
+   * recorded intent is never lost and the request still succeeds (202).
+   */
+  async sendInvites(
+    quizId: string,
+    adminId: string,
+    invitees: SendInvitesInput[],
+    baseUrl: string,
+  ): Promise<SendInvitesResult> {
+    // Normalize: lowercase + dedupe by email; default missing names to the email local-part.
+    const seen = new Set<string>();
+    const normalized: InviteParticipantInput[] = [];
+    for (const invitee of invitees) {
+      const email = invitee.email.trim().toLowerCase();
+      if (seen.has(email)) continue;
+      seen.add(email);
+      const name = invitee.name?.trim() || email.split('@')[0];
+      normalized.push({ email, name });
+    }
+
+    const outcome = await this.repo.createInvites(quizId, adminId, normalized, baseUrl);
+    if (!outcome.ok) {
+      if (outcome.reason === 'not_found') throw new NotFoundError('Quiz');
+      throw new BadRequestError(`Cannot send invites for a ${outcome.status} quiz`);
+    }
+
+    const { invitedCount, outboxRows } = outcome.result;
+
+    // Publish concurrently on the confirm channel; collect the ids that the broker confirmed.
+    const settled = await Promise.allSettled(
+      outboxRows.map((row) => this.publishInvite(row.payload).then(() => row.id)),
+    );
+    const publishedIds: string[] = [];
+    settled.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        publishedIds.push(r.value);
+      } else {
+        // Best-effort: the row stays published=false for a relay to retry. Log so a
+        // publishedCount < invitedCount is diagnosable instead of silently dropped.
+        console.error(`Failed to publish invite event ${outboxRows[i].id}`, r.reason);
+      }
+    });
+
+    await this.repo.markOutboxPublished(publishedIds);
+
+    return { invitedCount, publishedCount: publishedIds.length };
+  }
+
+  /** Publishes one invite event with publisher confirms; resolves only once the broker ACKs. */
+  private publishInvite(payload: unknown): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.amqpChannel.publish(
+        EXCHANGE_NAMES.INVITES,
+        INVITES_ROUTING_KEY,
+        Buffer.from(JSON.stringify(payload)),
+        { persistent: true, contentType: 'application/json' },
+        (err) => (err ? reject(err) : resolve()),
+      );
+    });
   }
 
   async updateQuizDetails(quizId: string, adminId: string, input: UpdateQuizInput): Promise<void> {

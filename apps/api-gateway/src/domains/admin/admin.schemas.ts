@@ -257,6 +257,24 @@ export const getQuizLinkResponseSchema = z.object({
   link: z.string().url(),
 });
 
+// ─── Invite Schemas ──────────────────────────────────────────────────────────
+
+export const createInvitesBodySchema = z.object({
+  invitees: z.array(
+    z.object({
+      email: z.string().email({ message: 'Invalid email address' }),
+      // Optional — defaults to the email's local-part server-side (participants.name is NOT NULL)
+      name: z.string().min(1).max(255).optional(),
+    }),
+  ).min(1, { message: 'At least one invitee is required' }).max(500),
+});
+
+export const createInvitesResponse202Schema = z.object({
+  message: z.string(),
+  invitedCount: z.number().describe('Number of participants recorded/invited for the quiz'),
+  publishedCount: z.number().describe('Number of invite events published to the broker in this request'),
+});
+
 export const getQuizAnalyticsResponseSchema = z.object({
   analytics: z.any(),
 });

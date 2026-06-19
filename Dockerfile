@@ -22,9 +22,11 @@ COPY package.json pnpm-workspace.yaml ./
 COPY tsconfig.base.json ./
 
 # Copy only package.json from every workspace member (fast dep resolution)
-COPY packages/config/package.json  packages/config/
-COPY packages/logger/package.json  packages/logger/
-COPY apps/api-gateway/package.json apps/api-gateway/
+COPY packages/config/package.json    packages/config/
+COPY packages/logger/package.json    packages/logger/
+COPY packages/messaging/package.json packages/messaging/
+COPY apps/api-gateway/package.json   apps/api-gateway/
+COPY apps/mail-worker/package.json   apps/mail-worker/
 
 # Install all workspace deps
 RUN pnpm install --frozen-lockfile || pnpm install

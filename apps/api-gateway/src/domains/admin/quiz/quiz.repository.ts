@@ -80,6 +80,28 @@ export interface AddQuestionData {
   points: number;
 }
 
+export interface InviteParticipantInput {
+  email: string;
+  name: string;
+}
+
+export interface InviteOutboxRow {
+  id: string;
+  payload: unknown;
+}
+
+export interface CreateInvitesResult {
+  invitedCount: number;
+  outboxRows: InviteOutboxRow[];
+}
+
+// Distinguishes the three outcomes so the service can map each to the right HTTP error
+// without a side-effect-then-error window (status is gated inside the transaction).
+export type CreateInvitesOutcome =
+  | { ok: true; result: CreateInvitesResult }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'invalid_status'; status: QuizStatus };
+
 export class AdminQuizRepository {
   constructor(
     private readonly writePool: Pool,
@@ -314,5 +336,113 @@ export class AdminQuizRepository {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Records invitees and stages their invitation events in a single transaction
+   * (transactional outbox). Upserts are idempotent per email / per (quiz, participant),
+   * so re-calling refreshes invitation_sent_at without duplicating rows or downgrading
+   * a participant who has already joined.
+   *
+   * Returns null when the quiz does not exist or is not owned by adminId.
+   * The caller is responsible for publishing the returned outbox rows and marking
+   * them published via markOutboxPublished().
+   */
+  async createInvites(
+    quizId: string,
+    adminId: string,
+    invitees: InviteParticipantInput[],
+    baseUrl: string,
+  ): Promise<CreateInvitesOutcome> {
+    const client = await this.writePool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const quizRes = await client.query(
+        'SELECT title, share_token, start_time, status FROM quizzes WHERE id = $1 AND created_by = $2 FOR UPDATE',
+        [quizId, adminId]
+      );
+      if (quizRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'not_found' };
+      }
+
+      const quiz = quizRes.rows[0] as { title: string; share_token: string; start_time: Date | string; status: QuizStatus };
+
+      // Can't invite to a quiz that's over. Gate inside the txn so nothing is recorded on reject.
+      if (quiz.status === 'completed' || quiz.status === 'archived') {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'invalid_status', status: quiz.status };
+      }
+
+      const joinLink = `${baseUrl.replace(/\/+$/, '')}/quizzes/${quiz.share_token}/join`;
+      const startTime = quiz.start_time instanceof Date ? quiz.start_time.toISOString() : quiz.start_time;
+
+      const outboxRows: InviteOutboxRow[] = [];
+      let newParticipants = 0;
+      for (const invitee of invitees) {
+        const participantRes = await client.query(
+          `INSERT INTO participants (name, email)
+           VALUES ($1, $2)
+           ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+           RETURNING id`,
+          [invitee.name, invitee.email]
+        );
+        const participantId = participantRes.rows[0].id as string;
+
+        // Idempotent: refresh invitation_sent_at on re-invite; never downgrade status.
+        // RETURNING (xmax = 0) tells us whether this was a fresh INSERT vs an upsert,
+        // so participant_count counts only genuinely-new invitees.
+        const qpRes = await client.query(
+          `INSERT INTO quiz_participants (quiz_id, participant_id, status, invited_at, invitation_sent_at)
+           VALUES ($1, $2, 'invited', now(), now())
+           ON CONFLICT (quiz_id, participant_id) DO UPDATE SET invitation_sent_at = now()
+           RETURNING (xmax = 0) AS inserted`,
+          [quizId, participantId]
+        );
+        if (qpRes.rows[0].inserted === true) newParticipants++;
+
+        const payload = {
+          to: invitee.email,
+          name: invitee.name,
+          quizId,
+          quizTitle: quiz.title,
+          joinLink,
+          startTime,
+        };
+
+        const outboxRes = await client.query(
+          `INSERT INTO outbox_events (aggregate_type, aggregate_id, event_type, payload)
+           VALUES ('quiz', $1, 'participant.invited', $2)
+           RETURNING id, payload`,
+          [quizId, JSON.stringify(payload)]
+        );
+        outboxRows.push({ id: outboxRes.rows[0].id as string, payload: outboxRes.rows[0].payload });
+      }
+
+      // Keep the denormalized counter consistent (mirrors addQuestions/question_count).
+      if (newParticipants > 0) {
+        await client.query(
+          'UPDATE quizzes SET participant_count = participant_count + $1, updated_at = now() WHERE id = $2',
+          [newParticipants, quizId]
+        );
+      }
+
+      await client.query('COMMIT');
+      return { ok: true, result: { invitedCount: invitees.length, outboxRows } };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markOutboxPublished(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.writePool.query(
+      'UPDATE outbox_events SET published = true, published_at = now() WHERE id = ANY($1::bigint[])',
+      [ids]
+    );
   }
 }

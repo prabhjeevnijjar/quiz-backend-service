@@ -102,6 +102,26 @@ services:
       - ./apps:/app/apps
       - ./packages:/app/packages
 
+  # ── Mail Worker (RabbitMQ consumer → email provider) ─────────────────────
+  mail-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Reuse the shared image but run the worker instead of the API.
+    command: ["pnpm", "--filter", "@quiz/mail-worker", "dev"]
+    # The image's HEALTHCHECK targets the API's HTTP port; the worker has none.
+    healthcheck:
+      disable: true
+    env_file: .env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    # Mount source for hot-reload via tsx watch
+    volumes:
+      - ./apps:/app/apps
+      - ./packages:/app/packages
+
 volumes:
   pg_data:
   redis_data:
